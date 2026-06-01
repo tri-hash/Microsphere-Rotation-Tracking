@@ -163,6 +163,154 @@ def crop_around_center(gray, center, crop_radius=60):
 
     return crop, crop_info
 
+def threshold_bead_crop(pair_crop):
+    """
+    Convert bead crop into a binary image.
+
+    Output:
+        White = bead material
+        Black = background
+    """
+
+    _, crop_thresh = cv2.threshold(
+        pair_crop,
+        0,
+        255,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    return crop_thresh
+
+
+def split_pair_with_kmeans(crop_thresh):
+    """
+    Split an attached bead pair into two bead components using k-means.
+
+    Input:
+        crop_thresh: binary crop where beads are white, background is black.
+
+    Output:
+        big_bead_crop, small_bead_crop
+        each as (x, y, radius_estimate)
+    """
+
+    # Get coordinates of all white bead pixels
+    ys, xs = np.where(crop_thresh > 0)
+
+    if len(xs) < 10:
+        return None, None
+
+    points = np.column_stack((xs, ys)).astype(np.float32)
+
+    # Split white pixels into 2 spatial clusters
+    criteria = (
+        cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+        100,
+        0.2
+    )
+
+    _, labels, centers = cv2.kmeans(
+        points,
+        2,
+        None,
+        criteria,
+        10,
+        cv2.KMEANS_PP_CENTERS
+    )
+
+    beads = []
+
+    for cluster_id in [0, 1]:
+
+        cluster_points = points[labels.ravel() == cluster_id]
+
+        if len(cluster_points) == 0:
+            continue
+
+        cx = np.mean(cluster_points[:, 0])
+        cy = np.mean(cluster_points[:, 1])
+
+        # Radius estimate from area of cluster
+        area = len(cluster_points)
+        radius_estimate = np.sqrt(area / np.pi)
+
+        beads.append((cx, cy, radius_estimate, area))
+
+    if len(beads) < 2:
+        return None, None
+
+    # Larger pixel-area cluster is the big bead
+    beads = sorted(beads, key=lambda b: b[3], reverse=True)
+
+    big = beads[0]
+    small = beads[1]
+
+    big_bead_crop = (int(big[0]), int(big[1]), float(big[2]))
+    small_bead_crop = (int(small[0]), int(small[1]), float(small[2]))
+
+    return big_bead_crop, small_bead_crop
+
+def split_pair_from_threshold(crop_thresh):
+    """
+    Split an attached bead pair using distance transform.
+
+    Returns:
+        big_bead_crop   = (x, y, radius_estimate)
+        small_bead_crop = (x, y, radius_estimate)
+
+    Coordinates are in CROP coordinates, not full-frame coordinates.
+    """
+
+    dist = cv2.distanceTransform(crop_thresh, cv2.DIST_L2, 5)
+
+    dist_norm = cv2.normalize(
+        dist,
+        None,
+        0,
+        255,
+        cv2.NORM_MINMAX
+    ).astype("uint8")
+
+    _, peaks = cv2.threshold(
+        dist_norm,
+        int(0.05 * dist_norm.max()),
+        255,
+        cv2.THRESH_BINARY
+    )
+
+    peak_contours, _ = cv2.findContours(
+        peaks,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+    
+    print("Number of distance peaks:", len(peak_contours))
+
+    centers = []
+
+    for p in peak_contours:
+        M = cv2.moments(p)
+
+        if M["m00"] == 0:
+            continue
+
+        x = int(M["m10"] / M["m00"])
+        y = int(M["m01"] / M["m00"])
+
+        radius_estimate = dist[y, x]
+
+        centers.append((x, y, radius_estimate))
+
+    if len(centers) < 2:
+        return None, None
+
+    centers = sorted(centers, key=lambda c: c[2], reverse=True)
+
+    big_bead_crop = centers[0]
+    small_bead_crop = centers[1]
+
+    return big_bead_crop, small_bead_crop
+
 
 def find_circles_in_crop(
     crop,

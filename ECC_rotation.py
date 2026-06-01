@@ -68,60 +68,76 @@ gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 #   marker_angle      -> angle from big bead to small bead
 # =============================================================================
 
+# Find center of bead pair
 pair_center = find_particle_center(gray)
 
-if pair_center is not None:
-    pair_crop, crop_info = crop_around_center(gray, pair_center, crop_radius=60)
+if pair_center is None:
+    print("No bead pair found")
 
-    circles_crop = find_circles_in_crop(pair_crop)
-
-    circles_full = convert_crop_circles_to_full_frame(circles_crop, crop_info)
-
-    big_bead, small_bead = choose_big_small_beads(circles_full)
-
-    if big_bead is not None:
-        big_x, big_y, big_r = big_bead
-        small_x, small_y, small_r = small_bead
-
-        print("Big bead:", big_x, big_y, big_r)
-        print("Small bead:", small_x, small_y, small_r)
-    else:
-        print("Could not split bead pair into big/small circles.")
 else:
-    print("No bead pair found.")
-    
-display = frame.copy()
+    # Crop around bead-pair COM
+    pair_crop, crop_info = crop_around_center(
+        gray,
+        pair_center,
+        crop_radius=60
+    )
 
-cv2.circle(display, (big_x, big_y), big_r, (0, 255, 0), 2)
-cv2.circle(display, (big_x, big_y), 4, (0, 0, 255), -1)
+    # Threshold crop so beads are white and background is black
+    crop_thresh = threshold_bead_crop(pair_crop)
 
-cv2.circle(display, (small_x, small_y), small_r, (255, 0, 0), 2)
-cv2.circle(display, (small_x, small_y), 4, (255, 0, 0), -1)
+    # Split attached pair into big and small bead centers
+    big_crop, small_crop = split_pair_with_kmeans(crop_thresh)
 
-plt.imshow(cv2.cvtColor(display, cv2.COLOR_BGR2RGB))
-plt.axis("off")
-plt.show()
+    if big_crop is None:
+        print("Could not split bead pair")
 
-pair_crop, crop_info = crop_around_center(gray, pair_center, crop_radius=60)
+    else:
+        # Convert crop coordinates to full-frame coordinates
+        bx, by, big_r = big_crop
+        sx, sy, small_r = small_crop
 
-plt.figure()
-plt.imshow(pair_crop, cmap="gray")
-plt.title("Raw crop")
-plt.axis("off")
+        big_x = int(bx + crop_info["x0"])
+        big_y = int(by + crop_info["y0"])
 
-_, crop_thresh = cv2.threshold(
-    pair_crop,
-    0,
-    255,
-    cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        small_x = int(sx + crop_info["x0"])
+        small_y = int(sy + crop_info["y0"])
+
+        print("Big bead center:", big_x, big_y)
+        print("Small bead center:", small_x, small_y)
+
+        # Visualize result
+        display = frame.copy()
+
+        cv2.circle(display, (big_x, big_y), 4, (0, 0, 255), -1)
+        cv2.circle(display, (big_x, big_y), int(big_r), (0, 255, 0), 1)
+
+        cv2.circle(display, (small_x, small_y), 4, (255, 0, 0), -1)
+        cv2.circle(display, (small_x, small_y), int(small_r), (255, 0, 0), 1)
+
+        cv2.line(
+            display,
+            (big_x, big_y),
+            (small_x, small_y),
+            (255, 255, 0),
+            2
+        )
+
+        plt.imshow(cv2.cvtColor(display, cv2.COLOR_BGR2RGB))
+        plt.title("Big bead and attached small bead")
+        plt.axis("off")
+        plt.show()
+        
+        
+# Convert from BGR to RGB for plotting
+display_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+
+# Save annotated image
+cv2.imwrite(
+    "debug_bead_detection.png",
+    display
 )
 
-plt.figure()
-plt.imshow(crop_thresh, cmap="gray")
-plt.title("Thresholded crop")
-plt.axis("off")
-plt.show()
-
+print("Saved: debug_bead_detection.png")
 #Big sphere frame 1 coors: x = 370, y = 560
 
 # =============================================================================
