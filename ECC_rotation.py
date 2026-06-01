@@ -11,7 +11,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ReadOnlySphereRotationTracking import *
 
-video_path = "/Users/Taryn/Library/CloudStorage/Box-Box/PhD_Projects/LinkageStiffness/CV_tracking/ICRA2025_Dataset/TAEPull_MS19/TAEPull_MS19_constDirRotSine_vid1.mp4"
+# =============================================================================
+# Load video
+# =============================================================================
+
+video_path = (
+    "/Users/Taryn/Library/CloudStorage/Box-Box/"
+    "PhD_Projects/LinkageStiffness/CV_tracking/"
+    "ICRA2025_Dataset/TAEPull_MS19/"
+    "TAEPull_MS19_constDirRotSine_vid1.mp4"
+)
 
 cap = cv2.VideoCapture(video_path, cv2.CAP_AVFOUNDATION)
 
@@ -19,75 +28,104 @@ if not cap.isOpened():
     print("Could not open video")
     raise SystemExit
 
+
+# =============================================================================
+# Video diagnostics
+# =============================================================================
+
 fps = cap.get(cv2.CAP_PROP_FPS)
 n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-print(f"FPS: {fps}")
+print(f"FPS: {fps:.2f}")
 print(f"Frames: {n_frames}")
 print(f"Size: {width} x {height}")
 
 
+# =============================================================================
+# Read first frame
+# =============================================================================
 
 ret, frame = cap.read()
 
+if not ret:
+    print("Could not read first frame")
+    cap.release()
+    raise SystemExit
+
+# Convert frame to grayscale
 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-center = find_particle_center(gray)
 
-if center is not None:
-    x, y = center
-    print("Particle center:", x, y)
+# =============================================================================
+# Detect attached bead pair
+#
+# Returns:
+#   big_x, big_y      -> center of large bead
+#   big_r             -> radius of large bead
+#   small_x, small_y  -> center of attached small bead
+#   marker_angle      -> angle from big bead to small bead
+# =============================================================================
 
-    r = 100
-    roi = gray[y-r:y+r, x-r:x+r]
+pair_center = find_particle_center(gray)
 
-    plt.imshow(roi, cmap="gray")
-    plt.title("Centered particle ROI")
-    plt.axis("off")
-    plt.show()
+if pair_center is not None:
+    pair_crop, crop_info = crop_around_center(gray, pair_center, crop_radius=60)
+
+    circles_crop = find_circles_in_crop(pair_crop)
+
+    circles_full = convert_crop_circles_to_full_frame(circles_crop, crop_info)
+
+    big_bead, small_bead = choose_big_small_beads(circles_full)
+
+    if big_bead is not None:
+        big_x, big_y, big_r = big_bead
+        small_x, small_y, small_r = small_bead
+
+        print("Big bead:", big_x, big_y, big_r)
+        print("Small bead:", small_x, small_y, small_r)
+    else:
+        print("Could not split bead pair into big/small circles.")
 else:
-    print("No particle found")
+    print("No bead pair found.")
     
 display = frame.copy()
 
-if center is not None:
-    x, y = center
-    cv2.circle(display, (x, y), 8, (0, 0, 255), -1)
-    cv2.circle(display, (x, y), 100, (0, 255, 0), 2)
+cv2.circle(display, (big_x, big_y), big_r, (0, 255, 0), 2)
+cv2.circle(display, (big_x, big_y), 4, (0, 0, 255), -1)
 
-display_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
-
-plt.imshow(display_rgb)
-plt.axis("off")
-plt.show()
-
-result = find_big_bead_center(gray)
-
-if result is not None:
-    x, y, bead_radius = result
-
-    print("Big bead center:", x, y)
-    print("Radius:", bead_radius)
-    
-display = frame.copy()
-
-cv2.circle(display, (x, y), 4, (0, 0, 255), -1)
-cv2.circle(display, (x, y), int(bead_radius), (0, 255, 0), 2)
+cv2.circle(display, (small_x, small_y), small_r, (255, 0, 0), 2)
+cv2.circle(display, (small_x, small_y), 4, (255, 0, 0), -1)
 
 plt.imshow(cv2.cvtColor(display, cv2.COLOR_BGR2RGB))
 plt.axis("off")
 plt.show()
 
-#x = 370
-#y = 560
+pair_crop, crop_info = crop_around_center(gray, pair_center, crop_radius=60)
 
-#r = 100
+plt.figure()
+plt.imshow(pair_crop, cmap="gray")
+plt.title("Raw crop")
+plt.axis("off")
 
-#roi = gray[y-r:y+r, x-r:x+r]
+_, crop_thresh = cv2.threshold(
+    pair_crop,
+    0,
+    255,
+    cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+)
 
-#plt.imshow(roi, cmap='gray')
-#plt.show()
+plt.figure()
+plt.imshow(crop_thresh, cmap="gray")
+plt.title("Thresholded crop")
+plt.axis("off")
+plt.show()
+
+#Big sphere frame 1 coors: x = 370, y = 560
+
+# =============================================================================
+# Clean up
+# =============================================================================
 
 cap.release()
