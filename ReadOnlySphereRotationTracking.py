@@ -22,12 +22,65 @@ import matplotlib.cm as cm
 
 
 
+def find_big_bead_center(gray):
+
+    gray_work = gray.copy()
+
+    # ignore timestamp bar
+    gray_work[0:120, :] = 255
+
+    blur = cv2.GaussianBlur(gray_work, (5, 5), 0)
+
+    _, thresh = cv2.threshold(
+        blur,
+        0,
+        255,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    contours, _ = cv2.findContours(
+        thresh,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    candidates = []
+
+    for c in contours:
+        area = cv2.contourArea(c)
+
+        if area < 20 or area > 2000:
+            continue
+
+        perimeter = cv2.arcLength(c, True)
+
+        if perimeter == 0:
+            continue
+
+        circularity = 4 * np.pi * area / (perimeter ** 2)
+
+        # big bead should be fairly circular
+        if circularity < 0.4:
+            continue
+
+        (x, y), radius = cv2.minEnclosingCircle(c)
+
+        candidates.append((area, circularity, x, y, radius))
+
+    if len(candidates) == 0:
+        return None
+
+    # choose largest circular object
+    best = max(candidates, key=lambda item: item[0])
+
+    area, circularity, x, y, radius = best
+
+    return int(x), int(y), radius
 
 
 
 
-
-#Finds COM of microsphere structures
+#Finds COM of multi-sphere structures
 
 def find_particle_center(gray):
     
