@@ -15,3 +15,4 @@ def hello():
 
 # Main program starts here
 hello()
+print("cat")
